@@ -51,7 +51,7 @@ Launch a test by
 ```
 cd map_ws
 source devel/setup.bash
-roslaunch dynamic_occpuancy_map mapping.launch
+roslaunch dynamic_occupancy_map mapping.launch
 ```
 
 The launch file will start the example mapping node and open three RVIZ windows to show the current occupancy status (3D), predicted future occupancy status (2D, layer of a height set in `map_sim_example.cpp`), and the raw point cloud from the camera.

@@ -1,39 +1,63 @@
-cmake_minimum_required(VERSION 3.0.2)
-project(dynamic_occpuancy_map)
+cmake_minimum_required(VERSION 3.5)
+project(dynamic_occupancy_map)
 
-add_definitions(-std=c++14 -g -O3 -ftree-vectorize -ffast-math -march=native -lpthread)
-#add_definitions(-std=c++14)
+# if(POLICY CMP0074)
+#   cmake_policy(SET CMP0074 NEW)
+# endif()
 
+add_definitions(-std=c++17 -g -O3 -ftree-vectorize -ffast-math -march=native -lpthread)
+
+find_package(ament_cmake REQUIRED)
+find_package(rclcpp REQUIRED)
+find_package(sensor_msgs REQUIRED)
+find_package(geometry_msgs REQUIRED)
+find_package(visualization_msgs REQUIRED)
+find_package(nav_msgs REQUIRED)
+find_package(std_msgs REQUIRED)
+find_package(gazebo_msgs REQUIRED)
+find_package(pcl_conversions REQUIRED)
 find_package(PCL REQUIRED)
-
-find_package(catkin REQUIRED COMPONENTS
-  roscpp
-  rospy
-  std_msgs
-  message_filters
-  sensor_msgs #
-  image_transport
-)
-
 
 add_definitions(${PCL_DEFINITIONS})
 
-catkin_package(
-
-)
-
 include_directories(
   include
-  ${catkin_INCLUDE_DIRS}
   ${PCL_INCLUDE_DIRS}
+  /usr/local/include/munkres
 )
 
-include_directories(/usr/local/include/munkres)
 set(MunkresLIB
-        /usr/local/lib/libmunkres.a
-        )
+  /usr/local/lib/libmunkres.a
+)
 
 add_executable(map_sim_example src/map_sim_example.cpp)
-target_link_libraries(map_sim_example ${catkin_LIBRARIES} ${PCL_LIBRARIES} ${MunkresLIB})
 
+ament_target_dependencies(map_sim_example
+  rclcpp
+  sensor_msgs
+  geometry_msgs
+  visualization_msgs
+  nav_msgs
+  std_msgs
+  gazebo_msgs
+  pcl_conversions
+)
 
+target_link_libraries(map_sim_example
+  ${PCL_LIBRARIES}
+  ${MunkresLIB}
+)
+
+install(TARGETS map_sim_example
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+install(DIRECTORY launch rviz
+  DESTINATION share/${PROJECT_NAME}
+)
+
+install(DIRECTORY data
+  DESTINATION share/${PROJECT_NAME}
+)
+
+ament_package()

@@ -18,22 +18,23 @@ Description: This is a ROS example to use the DSP map. The map object is my_map 
 **************************************************************************/
 
 
-#include "ros/ros.h"
+#include "rclcpp/rclcpp.hpp"
 #include "dsp_dynamic.h" // You can change the head file to "dsp_dynamic_multiple_neighbors.h" or "dsp_static.h" to use different map types. For more information, please refer to the readme file.
 #include <pcl/common/transforms.h>
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/point_types.h>
 #include <pcl_conversions/pcl_conversions.h>
-#include <sensor_msgs/PointCloud2.h>
-#include "geometry_msgs/Pose.h"
-#include <visualization_msgs/Marker.h>
-#include <visualization_msgs/MarkerArray.h>
-#include <geometry_msgs/TwistStamped.h>
-#include "gazebo_msgs/ModelStates.h"
-#include "geometry_msgs/PoseStamped.h"
+#include <sensor_msgs/msg/point_cloud2.hpp>
+#include <geometry_msgs/msg/pose_stamped.hpp>
+#include <geometry_msgs/msg/twist_stamped.hpp>
+#include <geometry_msgs/msg/point.hpp>
+#include <visualization_msgs/msg/marker.hpp>
+#include <visualization_msgs/msg/marker_array.hpp>
+#include <gazebo_msgs/msg/model_states.hpp>
+#include <std_msgs/msg/float64.hpp>
 #include <queue>
-#include "nav_msgs/Odometry.h"
-#include "std_msgs/Float64.h"
+#include <vector>
+#include <string>
 
 /// Define a map object
 DSPMap my_map;
@@ -56,9 +57,19 @@ float y_max = MAP_WIDTH_VOXEL_NUM * VOXEL_RESOLUTION / 2;
 float z_min = -MAP_HEIGHT_VOXEL_NUM * VOXEL_RESOLUTION / 2;
 float z_max = MAP_HEIGHT_VOXEL_NUM * VOXEL_RESOLUTION / 2;
 
-ros::Publisher cloud_pub, map_center_pub, gazebo_model_states_pub, current_velocity_pub, single_object_velocity_pub, single_object_velocity_truth_pub;
-ros::Publisher future_status_pub, current_marker_pub, fov_pub, update_time_pub;
-gazebo_msgs::ModelStates ground_truth_model_states;
+rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr cloud_pub;
+rclcpp::Publisher<geometry_msgs::msg::PoseStamped>::SharedPtr map_center_pub;
+rclcpp::Publisher<gazebo_msgs::msg::ModelStates>::SharedPtr gazebo_model_states_pub;
+rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr current_velocity_pub;
+rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr single_object_velocity_pub;
+rclcpp::Publisher<geometry_msgs::msg::TwistStamped>::SharedPtr single_object_velocity_truth_pub;
+rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr future_status_pub;
+rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr current_marker_pub;
+rclcpp::Publisher<visualization_msgs::msg::Marker>::SharedPtr fov_pub;
+rclcpp::Publisher<std_msgs::msg::Float64>::SharedPtr update_time_pub;
+gazebo_msgs::msg::ModelStates ground_truth_model_states;
+
+rclcpp::Node::SharedPtr node;
 
 int ground_truth_updated = 0;
 bool state_locked = false;
@@ -70,14 +81,14 @@ void actor_publish(const vector<Eigen::Vector3d> &actors, int id, float r, float
 {
     if(actors.empty()) return;
 
-    visualization_msgs::MarkerArray marker_array;
+    visualization_msgs::msg::MarkerArray marker_array;
 
-    visualization_msgs::Marker marker;
+    visualization_msgs::msg::Marker marker;
 
     marker.header.frame_id = "map";
-    marker.header.stamp = ros::Time::now();
-    marker.type = visualization_msgs::Marker::CYLINDER;
-    marker.action = visualization_msgs::Marker::ADD;
+    marker.header.stamp = node->now();
+    marker.type = visualization_msgs::msg::Marker::CYLINDER;
+    marker.action = visualization_msgs::msg::Marker::ADD;
     marker.ns = "actors";
 
     marker.scale.x = 0.4;
@@ -102,13 +113,13 @@ void actor_publish(const vector<Eigen::Vector3d> &actors, int id, float r, float
         marker_array.markers.push_back(marker);
     }
 
-    current_marker_pub.publish(marker_array);
+    current_marker_pub->publish(marker_array);
 }
 
 /***
  * Summary: This is function used in showFOV. For visualization.
  */
-static void rotateVectorByQuaternion(geometry_msgs::Point &vector, Eigen::Quaternionf att)
+static void rotateVectorByQuaternion(geometry_msgs::msg::Point &vector, Eigen::Quaternionf att)
 {
     //Lazy. Use Eigen directly
     Eigen::Quaternionf ori_vector_quaternion, vector_quaternion;
@@ -127,12 +138,12 @@ static void rotateVectorByQuaternion(geometry_msgs::Point &vector, Eigen::Quater
  * Summary: This function is for FOV visualization
  */
 void showFOV(Eigen::Vector3d &position, Eigen::Quaternionf &att, double angle_h, double angle_v, double length){
-    geometry_msgs::Point p_cam;
+    geometry_msgs::msg::Point p_cam;
     p_cam.x = 0;
     p_cam.y = 0;
     p_cam.z = 0;
 
-    geometry_msgs::Point p1, p2, p3, p4;
+    geometry_msgs::msg::Point p1, p2, p3, p4;
     p1.x = length;
     p1.y = length * tan(angle_h/2);
     p1.z = length * tan(angle_v/2);
@@ -153,10 +164,10 @@ void showFOV(Eigen::Vector3d &position, Eigen::Quaternionf &att, double angle_h,
     p4.z = -length * tan(angle_v/2);
     rotateVectorByQuaternion(p4, att);
 
-    visualization_msgs::Marker fov;
+    visualization_msgs::msg::Marker fov;
     fov.header.frame_id = "map";
-    fov.header.stamp = ros::Time::now();
-    fov.action = visualization_msgs::Marker::ADD;
+    fov.header.stamp = node->now();
+    fov.action = visualization_msgs::msg::Marker::ADD;
     fov.ns = "lines_and_points";
     fov.id = 999;
     fov.type = 4;
@@ -169,7 +180,6 @@ void showFOV(Eigen::Vector3d &position, Eigen::Quaternionf &att, double angle_h,
     fov.color.g = 0.5;
     fov.color.b = 0.5;
     fov.color.a = 0.8;
-    fov.lifetime = ros::Duration(0);
 
     fov.points.push_back(p1);
     fov.points.push_back(p2);
@@ -181,7 +191,7 @@ void showFOV(Eigen::Vector3d &position, Eigen::Quaternionf &att, double angle_h,
     fov.points.push_back(p3);
     fov.points.push_back(p4);
     fov.points.push_back(p2);
-    fov_pub.publish(fov);
+    fov_pub->publish(fov);
 }
 
 /***
@@ -255,7 +265,7 @@ void colorAssign(int &r, int &g, int &b, float v, float value_min=0.f, float val
  * Summary: This is the main callback to update map.
  */
 pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_filtered(new pcl::PointCloud<pcl::PointXYZ>());
-void cloudCallback(const sensor_msgs::PointCloud2ConstPtr& cloud)
+void cloudCallback(const sensor_msgs::msg::PointCloud2::SharedPtr cloud)
 {
     /// Simple synchronizer for point cloud data and pose
     Eigen::Vector3d uav_position = uav_position_global;
@@ -265,29 +275,30 @@ void cloudCallback(const sensor_msgs::PointCloud2ConstPtr& cloud)
     static Eigen::Vector3d position_last_popped(-10000.f, -10000.f, -10000.f);
     static double last_popped_time = 0.0;
 
-    ros::Rate loop_rate(500);
+    rclcpp::Rate loop_rate(500.0);
     while(state_locked){
         loop_rate.sleep();
-        ros::spinOnce();
     }
     state_locked = true;
 
     while(!pose_att_time_queue.empty()){   //Synchronize pose by queue
         double time_stamp_pose = pose_att_time_queue.front();
-        if(time_stamp_pose >= cloud->header.stamp.toSec()){
+        if(time_stamp_pose >= rclcpp::Time(cloud->header.stamp).seconds()){
             uav_att = uav_att_global_queue.front();
             uav_position = uav_position_global_queue.front();
 
             // linear interpolation
             if(quad_last_popped.x() >= -1.f){
                 double time_interval_from_last_time = time_stamp_pose - last_popped_time;
-                double time_interval_cloud = cloud->header.stamp.toSec() - last_popped_time;
+                double time_interval_cloud = rclcpp::Time(cloud->header.stamp).seconds() - last_popped_time;
                 double factor = time_interval_cloud / time_interval_from_last_time;
                 uav_att = quad_last_popped.slerp(factor, uav_att);
                 uav_position = position_last_popped * (1.0 - factor) + uav_position*factor;
             }
 
-            ROS_INFO_THROTTLE(3.0, "cloud mismatch time = %lf", cloud->header.stamp.toSec() - time_stamp_pose);
+            RCLCPP_INFO_THROTTLE(node->get_logger(), *node->get_clock(), 3000,
+                                 "cloud mismatch time = %lf",
+                                 rclcpp::Time(cloud->header.stamp).seconds() - time_stamp_pose);
 
             break;
         }
@@ -304,7 +315,7 @@ void cloudCallback(const sensor_msgs::PointCloud2ConstPtr& cloud)
 
 
     /// Point cloud preprocess
-    double data_time_stamp = cloud->header.stamp.toSec();
+    double data_time_stamp = rclcpp::Time(cloud->header.stamp).seconds();
 
     // convert cloud to pcl form
     pcl::PointCloud<pcl::PointXYZ>::Ptr cloud_in(new pcl::PointCloud<pcl::PointXYZ>());
@@ -367,7 +378,7 @@ void cloudCallback(const sensor_msgs::PointCloud2ConstPtr& cloud)
 
     int occupied_num=0;
     pcl::PointCloud<pcl::PointXYZ> cloud_to_publish;
-    sensor_msgs::PointCloud2 cloud_to_pub_transformed;
+    sensor_msgs::msg::PointCloud2 cloud_to_pub_transformed;
     static float future_status[VOXEL_NUM][PREDICTION_TIMES];
     /** Note: The future status is stored with voxel structure.
      * The voxels are indexed with one dimension.
@@ -381,9 +392,9 @@ void cloudCallback(const sensor_msgs::PointCloud2ConstPtr& cloud)
     pcl::toROSMsg(cloud_to_publish, cloud_to_pub_transformed);
     cloud_to_pub_transformed.header.frame_id = "map";
     cloud_to_pub_transformed.header.stamp = cloud->header.stamp;
-    cloud_pub.publish(cloud_to_pub_transformed);
+    cloud_pub->publish(cloud_to_pub_transformed);
 
-    geometry_msgs::PoseStamped map_pose;
+    geometry_msgs::msg::PoseStamped map_pose;
     map_pose.header.stamp = cloud_to_pub_transformed.header.stamp;
     map_pose.pose.position.x = uav_position.x();
     map_pose.pose.position.y = uav_position.y();
@@ -392,7 +403,7 @@ void cloudCallback(const sensor_msgs::PointCloud2ConstPtr& cloud)
     map_pose.pose.orientation.y = uav_att.y();
     map_pose.pose.orientation.z = uav_att.z();
     map_pose.pose.orientation.w = uav_att.w();
-    map_center_pub.publish(map_pose);
+    map_center_pub->publish(map_pose);
 
 
     /// Publish future status of one layer
@@ -420,11 +431,11 @@ void cloudCallback(const sensor_msgs::PointCloud2ConstPtr& cloud)
         }
     }
 
-    sensor_msgs::PointCloud2 cloud_future_transformed;
+    sensor_msgs::msg::PointCloud2 cloud_future_transformed;
     pcl::toROSMsg(future_status_cloud, cloud_future_transformed);
     cloud_future_transformed.header.frame_id = "map";
     cloud_future_transformed.header.stamp = cloud->header.stamp;
-    future_status_pub.publish(cloud_future_transformed);
+    future_status_pub->publish(cloud_future_transformed);
 
     finish2 = clock();
 
@@ -432,9 +443,9 @@ void cloudCallback(const sensor_msgs::PointCloud2ConstPtr& cloud)
     printf( "****** Map publish time %f seconds\n \n", duration2);
 
     /// Publish update time for evaluation tools
-    std_msgs::Float64 update_time;
+    std_msgs::msg::Float64 update_time;
     update_time.data = duration1 + duration2;
-    update_time_pub.publish(update_time);
+    update_time_pub->publish(update_time);
 }
 
 /***
@@ -454,7 +465,7 @@ static void split(const string& s, vector<string>& tokens, const string& delimit
 /***
  * Summary: Ros callback function to get true position of pedestrians in Gazebo. Just for visualization
  */
-void simObjectStateCallback(const gazebo_msgs::ModelStates &msg)
+void simObjectStateCallback(const gazebo_msgs::msg::ModelStates &msg)
 {
     ground_truth_model_states = msg;
     ground_truth_updated = 1;
@@ -474,30 +485,30 @@ void simObjectStateCallback(const gazebo_msgs::ModelStates &msg)
         }
     }
     actor_publish(actor_visualization_points, 6, 1.f, 0.f, 0.f, 0.8, -1);
-    gazebo_model_states_pub.publish(ground_truth_model_states);
+    gazebo_model_states_pub->publish(ground_truth_model_states);
 }
 
 /***
  * Summary: Ros callback function to get pose of the drone (camera) to update map.
  */
-void simPoseCallback(const geometry_msgs::PoseStamped &msg)
+void simPoseCallback(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
 {
     if(!state_locked)
     {
         state_locked = true;
-        uav_position_global.x() = msg.pose.position.x;
-        uav_position_global.y() = msg.pose.position.y;
-        uav_position_global.z() = msg.pose.position.z;
+        uav_position_global.x() = msg->pose.position.x;
+        uav_position_global.y() = msg->pose.position.y;
+        uav_position_global.z() = msg->pose.position.z;
 
-        uav_att_global.x() = msg.pose.orientation.x;
-        uav_att_global.y() = msg.pose.orientation.y;
-        uav_att_global.z() = msg.pose.orientation.z;
-        uav_att_global.w() = msg.pose.orientation.w;
+        uav_att_global.x() = msg->pose.orientation.x;
+        uav_att_global.y() = msg->pose.orientation.y;
+        uav_att_global.z() = msg->pose.orientation.z;
+        uav_att_global.w() = msg->pose.orientation.w;
 
         uav_position_global_queue.push(uav_position_global);
         uav_att_global_queue.push(uav_att_global);
-        pose_att_time_queue.push(msg.header.stamp.toSec());
-        ROS_INFO("Pose updated");
+        pose_att_time_queue.push(rclcpp::Time(msg->header.stamp).seconds());
+        RCLCPP_INFO(node->get_logger(), "Pose updated");
     }
 
     state_locked = false;
@@ -515,8 +526,8 @@ void simPoseCallback(const geometry_msgs::PoseStamped &msg)
 
 int main(int argc, char **argv)
 {
-    ros::init(argc, argv, "map_sim_example_with_cluster");
-    ros::NodeHandle n;
+    rclcpp::init(argc, argv);
+    node = rclcpp::Node::make_shared("map_sim_example_with_cluster");
 
     /// Map parameters that can be changed dynamically. But usually we still use them as static parameters.
     my_map.setPredictionVariance(0.05, 0.05); // StdDev for prediction. velocity StdDev, position StdDev, respectively.
@@ -529,31 +540,35 @@ int main(int argc, char **argv)
 
 
     /// Gazebo pedestrain's pose. Just for visualization
-    ros::Subscriber object_states_sub = n.subscribe("/gazebo/model_states", 1, simObjectStateCallback);
+    auto object_states_sub = node->create_subscription<gazebo_msgs::msg::ModelStates>(
+            "/gazebo/model_states", rclcpp::QoS(1), simObjectStateCallback);
 
     /// Input data for the map
-    ros::Subscriber point_cloud_sub = n.subscribe("/camera_front/depth/points", 1, cloudCallback);
-    ros::Subscriber pose_sub = n.subscribe("/mavros/local_position/pose", 1, simPoseCallback);
+    auto point_cloud_sub = node->create_subscription<sensor_msgs::msg::PointCloud2>(
+            "/camera_front/depth/points", rclcpp::SensorDataQoS(), cloudCallback);
+    auto pose_sub = node->create_subscription<geometry_msgs::msg::PoseStamped>(
+            "/mavros/local_position/pose", rclcpp::QoS(1), simPoseCallback);
 
     /// Visualization topics
-    cloud_pub = n.advertise<sensor_msgs::PointCloud2>("/my_map/cloud_ob", 1, true);
-    map_center_pub = n.advertise<geometry_msgs::PoseStamped>("/my_map/map_center", 1, true);
-    gazebo_model_states_pub = n.advertise<gazebo_msgs::ModelStates>("/my_map/model_states", 1, true);
+    cloud_pub = node->create_publisher<sensor_msgs::msg::PointCloud2>("/my_map/cloud_ob", rclcpp::QoS(1).transient_local());
+    map_center_pub = node->create_publisher<geometry_msgs::msg::PoseStamped>("/my_map/map_center", rclcpp::QoS(1).transient_local());
+    gazebo_model_states_pub = node->create_publisher<gazebo_msgs::msg::ModelStates>("/my_map/model_states", rclcpp::QoS(1).transient_local());
 
-    future_status_pub = n.advertise<sensor_msgs::PointCloud2>("/my_map/future_status", 1, true);
+    future_status_pub = node->create_publisher<sensor_msgs::msg::PointCloud2>("/my_map/future_status", rclcpp::QoS(1).transient_local());
 
-    current_velocity_pub = n.advertise<visualization_msgs::MarkerArray>("/my_map/velocity_marker", 1);
-    single_object_velocity_pub = n.advertise<geometry_msgs::TwistStamped>("/my_map/single_object_velocity", 1);
-    single_object_velocity_truth_pub = n.advertise<geometry_msgs::TwistStamped>("/my_map/single_object_velocity_ground_truth", 1);
-    current_marker_pub = n.advertise<visualization_msgs::MarkerArray>("/visualization_marker", 1);
-    fov_pub = n.advertise<visualization_msgs::Marker>("/visualization_fov", 1);
+    current_velocity_pub = node->create_publisher<visualization_msgs::msg::MarkerArray>("/my_map/velocity_marker", rclcpp::QoS(1));
+    single_object_velocity_pub = node->create_publisher<geometry_msgs::msg::TwistStamped>("/my_map/single_object_velocity", rclcpp::QoS(1));
+    single_object_velocity_truth_pub = node->create_publisher<geometry_msgs::msg::TwistStamped>("/my_map/single_object_velocity_ground_truth", rclcpp::QoS(1));
+    current_marker_pub = node->create_publisher<visualization_msgs::msg::MarkerArray>("/visualization_marker", rclcpp::QoS(1));
+    fov_pub = node->create_publisher<visualization_msgs::msg::Marker>("/visualization_fov", rclcpp::QoS(1));
 
-    update_time_pub = n.advertise<std_msgs::Float64>("/map_update_time", 1);
+    update_time_pub = node->create_publisher<std_msgs::msg::Float64>("/map_update_time", rclcpp::QoS(1));
 
-    /// Ros spin
-    ros::AsyncSpinner spinner(3); // Use 3 threads
-    spinner.start();
-    ros::waitForShutdown();
+    /// Ros2 spin
+    rclcpp::executors::MultiThreadedExecutor executor;
+    executor.add_node(node);
+    executor.spin();
+    rclcpp::shutdown();
 
     return 0;
 }
