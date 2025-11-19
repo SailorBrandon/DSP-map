@@ -8,7 +8,7 @@ import os
 
 def generate_launch_description():
     pkg_share = get_package_share_directory('dynamic_occupancy_map')
-    rviz_dir = os.path.join(pkg_share, 'rviz')
+    rviz_cfg = os.path.join(pkg_share, "rviz", "map.rviz")
     data_dir = os.path.join(pkg_share, 'data')
 
     bag_dir_arg = DeclareLaunchArgument(
@@ -18,7 +18,7 @@ def generate_launch_description():
 
     dataset_name_arg = DeclareLaunchArgument(
         'dataset_name',
-        default_value='street'
+        default_value='street_ros2'
     )
 
     bag_play = ExecuteProcess(
@@ -45,23 +45,8 @@ def generate_launch_description():
         Node(
             package='rviz2',
             executable='rviz2',
-            name='rviz3',
-            arguments=['-d', os.path.join(rviz_dir, 'original_pointcloud.rviz')],
-            output='screen'
-        ),
-        Node(
-            package='rviz2',
-            executable='rviz2',
-            name='rviz2',
-            arguments=['-d', os.path.join(rviz_dir, 'future_status.rviz')],
-            output='screen'
-        ),
-        Node(
-            package='rviz2',
-            executable='rviz2',
             name='rviz',
-            arguments=['-d', os.path.join(rviz_dir, 'boxes.rviz')],
-            output='screen'
+            arguments=["-d", rviz_cfg],
         ),
     ])
 
